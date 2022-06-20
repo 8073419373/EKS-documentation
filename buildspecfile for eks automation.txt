@@ -1,0 +1,93 @@
+version: 0.2
+
+env:
+  variables:
+    AWS_REGION: us-east-1 # checkfor specific region
+    AWS_ACCOUNT_ID: 452444392358  # account id
+    IMAGE_REPO_NAME: eksfoodappimagefe # image name
+    REPOSITORY_URI: 452444392358.dkr.ecr.us-east-1.amazonaws.com/eksfoodappimagefe
+    IMAGE_TAG: latestfe
+    AWS_CLUSTER_NAME: EKSAutomationcluster
+    AWS_DEFAULT_REGION: us-east-1
+    EKS_KUBECTL_ROLE_ARN: arn:aws:iam::452444392358:role/eksClusterRole1
+    EKS_CLUSTER_NAME: EKSAutomationcluster
+    
+phases:
+
+  install:
+    commands:
+       - echo Installing app dependencies...
+       - curl -o kubectl https://amazon-eks.s3.us-west-2.amazonaws.com/1.18.9/2020-11-02/bin/linux/amd64/kubectl
+       - chmod +x ./kubectl
+       - mkdir -p $HOME/bin && cp ./kubectl $HOME/bin/kubectl && export PATH=$PATH:$HOME/bin
+       - echo 'export PATH=$PATH:$HOME/bin' >> ~/.bashrc
+       - source ~/.bashrc
+       - echo 'Check kubectl version'
+       - kubectl version --short --client
+  pre_build:
+    commands :
+        #- CREDENTIALS=$(aws sts assume-role --role-arn $EKS_KUBECTL_ROLE_ARN --role-session-name codebuild-kubectl --duration-seconds 900)
+        #- export AWS_ACCESS_KEY_ID="$(echo ${CREDENTIALS} | jq -r '.Credentials.AccessKeyId')"
+        #- export AWS_SECRET_ACCESS_KEY="$(echo ${CREDENTIALS} | jq -r '.Credentials.SecretAccessKey')"
+        #- export AWS_SESSION_TOKEN="$(echo ${CREDENTIALS} | jq -r '.Credentials.SessionToken')"
+        #- export AWS_EXPIRATION=$(echo ${CREDENTIALS} | jq -r '.Credentials.Expiration')
+        - aws sts get-caller-identity
+        - echo Logging in to Amazon EKS...
+        - aws eks --region $AWS_DEFAULT_REGION update-kubeconfig --name $AWS_CLUSTER_NAME
+        - echo check config 
+        - kubectl config view --minify
+        - echo check kubectl access
+        - kubectl get svc  
+  build:
+    commands:
+        - aws codecommit get-file --repository-name EKSAutomation --commit-specifier version_1 --file-path Dockerfile
+        - echo Dockerfile
+        - echo Build started on `date`
+        - echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USERNAME" --password-stdin
+        - echo Building the Docker image...
+        - docker build -t $IMAGE_REPO_NAME:$IMAGE_TAG .
+        - echo Build completed on `date`
+  post_build:
+    commands:
+        - echo Logging in to Amazon ECR...
+        - aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 452444392358.dkr.ecr.us-east-1.amazonaws.com
+        - docker tag $IMAGE_REPO_NAME:$IMAGE_TAG $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$IMAGE_REPO_NAME:$IMAGE_TAG
+        - echo Pushing the Docker image...
+        - docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$IMAGE_REPO_NAME:$IMAGE_TAG
+        - echo $IMAGE_REPO-NAME
+        - echo "Update Image tag in kube-manifest..."
+        - sed -i 's@CONTAINER_IMAGE@'"$REPOSITORY_URI:$TAG"'@' Foodapp-Deployment.yml
+        #- printf '{"ImageURI":"$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$IMAGE_REPO_NAME:$IMAGE_TAG"}' > build.json
+        #- printf '{"ImageURI":"%s"}'  $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$IMAGE_REPO_NAME:$IMAGE_TAG  > build.json
+        # Extracting AWS Credential Information using STS Assume Role for kubectl
+        - echo "Setting Environment Variables related to AWS CLI for Kube Config Setup"          
+        #- CREDENTIALS=$(aws sts assume-role --role-arn $EKS_KUBECTL_ROLE_ARN --role-session-name codebuild-kubectl --duration-seconds 900)
+        #- export AWS_ACCESS_KEY_ID="$(echo ${CREDENTIALS} | jq -r '.Credentials.AccessKeyId')"
+        #- export AWS_SECRET_ACCESS_KEY="$(echo ${CREDENTIALS} | jq -r '.Credentials.SecretAccessKey')"
+        #- export AWS_SESSION_TOKEN="$(echo ${CREDENTIALS} | jq -r '.Credentials.SessionToken')"
+        #- export AWS_EXPIRATION=$(echo ${CREDENTIALS} | jq -r '.Credentials.Expiration')
+        # Setup kubectl with our EKS Cluster              
+        - echo "Update Kube Config"      
+        - aws eks update-kubeconfig --name $EKS_CLUSTER_NAME
+        # Apply changes to our Application using kubectl
+        - echo "Apply changes to kube manifests"            
+        - kubectl apply -f Foodapp-Deployment.yml
+        - kubectl apply -f Foodapp-IngressService.yml
+        - kubectl apply -f Foodapp-Service.yml
+        - echo "Completed applying changes to Kubernetes Objects"           
+        # Create Artifacts which we can use if we want to continue our pipeline for other stages
+        - printf '[{"name":"Foodapp-Deployment.yml","imageUri":"%s"}]' $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$IMAGE_REPO_NAME:$IMAGE_TAG > build.json
+        # Additional Commands to view your credentials      
+        #- echo "Credentials Value is..  ${CREDENTIALS}"      
+        #- echo "AWS_ACCESS_KEY_ID...  ${AWS_ACCESS_KEY_ID}"            
+        #- echo "AWS_SECRET_ACCESS_KEY...  ${AWS_SECRET_ACCESS_KEY}"            
+        #- echo "AWS_SESSION_TOKEN...  ${AWS_SESSION_TOKEN}"            
+        #- echo "AWS_EXPIRATION...  $AWS_EXPIRATION"             
+        #- echo "EKS_CLUSTER_NAME...  $EKS_CLUSTER_NAME"             
+artifacts:
+  files: 
+    - build.json
+    - Dockerfile   
+    - Foodapp-deployment.yml
+    - Foodapp-IngressService.yml
+    - Foodapp-Service.yml
