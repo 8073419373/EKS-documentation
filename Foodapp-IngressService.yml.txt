@@ -10,6 +10,7 @@ metadata:
     # Ingress Core Settings  
     kubernetes.io/ingress.class: "alb"
     alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
     # Health Check Settings
     alb.ingress.kubernetes.io/healthcheck-protocol: HTTP 
     alb.ingress.kubernetes.io/healthcheck-port: traffic-port
@@ -30,12 +31,11 @@ spec:
   rules:
     - http:
         paths:
-          #- path: /* # SSL Redirect Setting
-            #backend:
-              #serviceName: ssl-redirect
-              #servicePort: use-annotation            
-          - path: /*
+          - path: /
+            pathType: Prefix
             backend:
-              serviceName: eks-foodapp-service
-              servicePort: 3000                                   
+              service:
+                name: eks-foodapp-service
+                port:
+                  number: 3000                                 
 # Important Note-1: In path based routing order is very important, if we are going to use  "/*", try to use it at the end of all rules.    
